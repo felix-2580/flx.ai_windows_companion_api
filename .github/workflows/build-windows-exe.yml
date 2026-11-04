@@ -1,0 +1,61 @@
+name: Build FLX.AI Windows Companion
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'companion.py'
+      - 'companion-requirements.txt'
+      - '.github/workflows/build-windows-exe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out this commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: companion-requirements.txt
+
+      - name: Install companion dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r companion-requirements.txt
+
+      - name: Verify Python syntax
+        run: python -m py_compile companion.py
+
+      - name: Build standalone Windows executable
+        run: >-
+          pyinstaller --noconfirm --clean --onefile --console
+          --name FLXAI-Companion
+          --collect-all pycaw
+          --collect-all comtypes
+          --hidden-import=screen_brightness_control
+          companion.py
+
+      - name: Verify executable exists
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'dist/FLXAI-Companion.exe')) {
+            throw 'PyInstaller did not produce dist/FLXAI-Companion.exe'
+          }
+          Get-Item 'dist/FLXAI-Companion.exe' | Format-List Name,Length,LastWriteTime
+
+      - name: Upload Windows companion artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FLXAI-Companion-Windows-run-${{ github.run_number }}
+          path: dist/FLXAI-Companion.exe
+          if-no-files-found: error
+          retention-days: 14
