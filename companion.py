@@ -278,6 +278,9 @@ def toggle_adapter(kind: str, enable: bool) -> tuple[str, bool]:
         wanted_kind = RadioKind.WI_FI if kind == "Wi-Fi" else RadioKind.BLUETOOTH
 
         async def update_radio():
+            access = await Radio.request_access_async()
+            if access != RadioAccessStatus.ALLOWED:
+                return False, f"Windows denied permission to change the {kind} radio (status: {access})."
             radios = await Radio.get_radios_async()
             radio = next((item for item in radios if item.kind == wanted_kind), None)
             if radio is None:
