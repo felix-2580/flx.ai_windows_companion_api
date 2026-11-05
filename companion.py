@@ -134,7 +134,9 @@ def launch(target: str, label: str) -> tuple[str, bool]:
             executable = resolve_executable(target)
             if not executable:
                 raise FileNotFoundError(target)
-            subprocess.Popen([executable], shell=False)
+            console_apps = {"cmd.exe", "powershell.exe", "wt.exe"}
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if target.lower() in console_apps else 0
+            subprocess.Popen([executable], shell=False, creationflags=flags)
         return f"Opened {label}.", True
     except Exception:
         return f"Couldn't open {label}. Check that it is installed and available on this PC.", False
