@@ -1,3 +1,4 @@
+#companion.py
 """FLX.AI Windows Companion: allow-listed local actions for the FLX.AI website."""
 from __future__ import annotations
 
