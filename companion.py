@@ -187,7 +187,11 @@ def known_folder(name: str) -> Path | None:
 
 
 def set_volume(command: str) -> tuple[str, bool]:
+    com_initialized = False
     try:
+        import comtypes
+        comtypes.CoInitialize()
+        com_initialized = True
         from ctypes import POINTER, cast
         from comtypes import CLSCTX_ALL
         from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -220,9 +224,19 @@ def set_volume(command: str) -> tuple[str, bool]:
                 return "Unsupported volume command.", False
         target = max(0, min(100, target))
         endpoint.SetMasterVolumeLevelScalar(target / 100, None)
-        return f"System volume set to {target}%.", True
+        actual = round(endpoint.GetMasterVolumeLevelScalar() * 100)
+        if abs(actual - target) > 1:
+            return f"Windows did not confirm the requested volume. Actual volume: {actual}%.", False
+        return f"System volume set to {actual}%.", True
     except Exception as exc:
-        return f"Volume control failed: {type(exc).__name__}. Check the companion audio dependencies and Windows audio device.", False
+        return f"Volume control failed: {type(exc).__name__}: {exc}", False
+    finally:
+        if com_initialized:
+            try:
+                import comtypes
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
 
 
 def set_brightness(command: str) -> tuple[str, bool]:
@@ -403,6 +417,24 @@ def process_command(raw: str, confirmed: bool = False) -> dict:
             return result("Couldn't open Google Search in your default browser.", False, original)
 
     # 2. Open commands: applications, websites and folders are resolved separately.
+    if command in {"open guest mode in chrome", "open chrome guest mode", "open chrome in guest mode"}:
+        executable = resolve_executable("chrome.exe")
+        if not executable:
+            return result("Google Chrome could not be found on this computer.", False, original)
+        try:
+            subprocess.Popen([executable, "--guest"], shell=False)
+            return result("Opened Google Chrome Guest mode.", True, original)
+        except Exception as exc:
+            return result(f"Couldn't open Chrome Guest mode: {type(exc).__name__}: {exc}", False, original)
+    if command in {"open incognito in chrome", "open chrome incognito", "open chrome in incognito mode"}:
+        executable = resolve_executable("chrome.exe")
+        if not executable:
+            return result("Google Chrome could not be found on this computer.", False, original)
+        try:
+            subprocess.Popen([executable, "--incognito"], shell=False)
+            return result("Opened Google Chrome Incognito mode.", True, original)
+        except Exception as exc:
+            return result(f"Couldn't open Chrome Incognito mode: {type(exc).__name__}: {exc}", False, original)
     if command.startswith("open "):
         target = command[5:].strip()
         if target in WEBSITES: 
@@ -443,7 +475,28 @@ def process_command(raw: str, confirmed: bool = False) -> dict:
         enable = command in {"turn bluetooth on", "enable bluetooth", "bluetooth on"}
         msg, ok = toggle_adapter("Bluetooth", enable); return result(msg, ok, original)
 
-    # 7. Lock and power commands. Shutdown/restart are always confirmation-gated.
+    # 7. Active-window management.
+    if command in {"minimize window", "minimise window", "maximize window", "maximise window", "restore window", "close window"}:
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return result("No active window was found.", False, original)
+            if command in {"minimize window", "minimise window"}:
+                user32.ShowWindow(hwnd, 6)
+                return result("Minimized the active window.", True, original)
+            if command in {"maximize window", "maximise window"}:
+                user32.ShowWindow(hwnd, 3)
+                return result("Maximized the active window.", True, original)
+            if command == "restore window":
+                user32.ShowWindow(hwnd, 9)
+                return result("Restored the active window.", True, original)
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)
+            return result("Sent a close request to the active window.", True, original)
+        except Exception as exc:
+            return result(f"Window control failed: {type(exc).__name__}: {exc}", False, original)
+
+    # 8. Lock and power commands. Shutdown/restart are always confirmation-gated.
     if command in {"lock computer", "lock pc"}:
         try:
             if ctypes.windll.user32.LockWorkStation(): return result("Windows session locked.", True, original)
@@ -505,7 +558,7 @@ def process_command(raw: str, confirmed: bool = False) -> dict:
     # Preserve existing local utility functionality without sending unknown commands to a search engine or AI.
     if command in {"what time", "current time", "tell me the time", "time now"}:
         return result("Local time: " + datetime.now().astimezone().strftime("%I:%M %p"), True, original)
-    if command in {"today's date", "todays date", "what date", "current date", "date today"}:
+    if command in {"today's date", "todays date", "what date", "current date", "date today", "what is the date today", "what day is it", "what day is today", "today date"}:
         return result("Local date: " + datetime.now().astimezone().strftime("%A, %d %B %Y"), True, original)
     expression = None
     for prefix in ("calculate ", "compute ", "what is ", "what's "):
