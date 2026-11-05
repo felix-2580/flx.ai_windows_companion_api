@@ -268,40 +268,37 @@ def set_brightness(command: str) -> tuple[str, bool]:
 
 
 def toggle_adapter(kind: str, enable: bool) -> tuple[str, bool]:
+    """Change the Windows Wi-Fi/Bluetooth radio state through the Windows Radio API."""
     if os.name != "nt":
         return f"{kind} controls are only supported on Windows.", False
-    if kind == "Wi-Fi":
-        script = r"""
-$a = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'Wi-Fi|WiFi|Wireless' -or $_.InterfaceDescription -match 'Wireless|Wi-Fi' } | Select-Object -First 1
-if ($null -eq $a) { Write-Output 'FLX_NO_ADAPTER'; exit 3 }
-try { ACTION -Name $a.Name -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 500; $v = Get-NetAdapter -Name $a.Name; if ((EXPECTED)) { Write-Output 'FLX_OK' } else { Write-Output 'FLX_NOT_CHANGED'; exit 4 } } catch { Write-Output 'FLX_DENIED'; exit 5 }
-"""
-        action = "Enable-NetAdapter" if enable else "Disable-NetAdapter"
-        expected = "$v.Status -eq 'Up'" if enable else "$v.Status -ne 'Up'"
-        script = script.replace("ACTION", action).replace("(EXPECTED)", expected)
-    else:
-        # Restrict selection to likely Bluetooth radio/adapter entries, not paired peripherals.
-        script = r"""
-$a = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'Bluetooth.*(Adapter|Radio)|(Adapter|Radio).*Bluetooth' } | Select-Object -First 1
-if ($null -eq $a) { Write-Output 'FLX_NO_ADAPTER'; exit 3 }
-try { ACTION -InstanceId $a.InstanceId -ErrorAction Stop; Start-Sleep -Milliseconds 700; $v = Get-PnpDevice -InstanceId $a.InstanceId; if ((EXPECTED)) { Write-Output 'FLX_OK' } else { Write-Output 'FLX_NOT_CHANGED'; exit 4 } } catch { Write-Output 'FLX_DENIED'; exit 5 }
-"""
-        action = "Enable-PnpDevice" if enable else "Disable-PnpDevice"
-        expected = "$v.Status -eq 'OK'" if enable else "$v.Status -ne 'OK'"
-        script = script.replace("ACTION", action).replace("(EXPECTED)", expected)
     try:
-        run = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-                             capture_output=True, text=True, timeout=20)
-        output = (run.stdout + "\n" + run.stderr).upper()
-        if run.returncode == 0 and "FLX_OK" in output:
-            return f"{kind} adapter {'enabled' if enable else 'disabled'}.", True
-        if "FLX_NO_ADAPTER" in output:
-            return f"Couldn't find a suitable {kind} adapter.", False
-        if "FLX_DENIED" in output or "ACCESS IS DENIED" in output or "ADMINISTRATOR" in output:
-            return f"Windows denied the {kind} change. Try running the companion with suitable permissions.", False
-        return f"Windows couldn't confirm that the {kind} adapter was {'enabled' if enable else 'disabled'}. Check Windows permissions and adapter support.", False
-    except Exception:
-        return f"Couldn't control {kind}. PowerShell or the adapter may be unavailable.", False
+        import asyncio
+        from winrt.windows.devices.radios import Radio, RadioKind, RadioState, RadioAccessStatus
+
+        wanted_kind = RadioKind.WI_FI if kind == "Wi-Fi" else RadioKind.BLUETOOTH
+
+        async def update_radio():
+            radios = await Radio.get_radios_async()
+            radio = next((item for item in radios if item.kind == wanted_kind), None)
+            if radio is None:
+                return False, f"No {kind} radio was found."
+            desired = RadioState.ON if enable else RadioState.OFF
+            if radio.state == desired:
+                return True, f"{kind} is already {'on' if enable else 'off'}."
+            status = await radio.set_state_async(desired)
+            if status != RadioAccessStatus.ALLOWED:
+                return False, f"Windows did not allow changing {kind} (status: {status})."
+            verify = await Radio.get_radios_async()
+            current = next((item for item in verify if item.kind == wanted_kind), None)
+            if current and current.state == desired:
+                return True, f"{kind} turned {'on' if enable else 'off'}."
+            return False, f"Windows did not confirm the {kind} state change."
+
+        return asyncio.run(update_radio())
+    except ImportError:
+        return "Windows Radio API support is missing from this companion build. Rebuild the EXE with winrt-Windows.Devices.Radios installed.", False
+    except Exception as exc:
+        return f"Couldn't change {kind}: {type(exc).__name__}: {exc}", False
 
 
 def safe_calculate(expression: str):
