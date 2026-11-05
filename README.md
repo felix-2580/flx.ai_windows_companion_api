@@ -1,3 +1,4 @@
+#companion.py
 # FLX.AI Windows Companion
 
 This repository builds the **local Windows companion** used by the FLX.AI website. It is separate from the Render website repository.
