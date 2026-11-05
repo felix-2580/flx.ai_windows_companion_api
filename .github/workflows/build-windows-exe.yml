@@ -3,10 +3,6 @@ name: Build FLX.AI Windows Companion
 on:
   push:
     branches: [main]
-    paths:
-      - 'companion.py'
-      - 'companion-requirements.txt'
-      - '.github/workflows/build-windows-exe.yml'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +37,8 @@ jobs:
           --name FLXAI-Companion
           --collect-all pycaw
           --collect-all comtypes
+          --collect-all winrt
+          --hidden-import=winrt.windows.devices.radios
           --hidden-import=screen_brightness_control
           companion.py
 
@@ -55,7 +53,7 @@ jobs:
       - name: Upload Windows companion artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FLXAI-Companion-Windows-run-${{ github.run_number }}
+          name: FLXAI-Companion-Windows-${{ github.run_number }}-${{ github.sha }}
           path: dist/FLXAI-Companion.exe
           if-no-files-found: error
           retention-days: 14
